@@ -58,7 +58,8 @@ async function fetchAndDisplayPersonalStats() {
     const viewerResponse = await fetch('https://medium.com/_/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(viewerQuery)
+      body: JSON.stringify(viewerQuery),
+      credentials: 'include'
     });
     const viewerData = await viewerResponse.json();
     const userId = viewerData?.data?.viewer?.id;
@@ -93,7 +94,8 @@ async function fetchAndDisplayPersonalStats() {
     const statsResponse = await fetch('https://medium.com/_/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(statsQuery)
+      body: JSON.stringify(statsQuery),
+      credentials: 'include'
     });
     const statsData = await statsResponse.json();
     if (statsData.errors) throw new Error(statsData.errors[0].message);
@@ -491,7 +493,8 @@ async function fetchAndDisplayAuthorStats() {
         const response = await fetch('https://medium.com/_/graphql', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(authorQuery)
+            body: JSON.stringify(authorQuery),
+            credentials: 'include'
         });
 
         const authorData = await response.json();
