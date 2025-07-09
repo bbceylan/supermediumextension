@@ -44,3 +44,25 @@ body {
 /* Loader and Error Styles */
 .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin-left: auto; display: none; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }.error { color: #ff6b6b; background-color: #4d2323; padding: 10px; border-radius: 5px; text-align: center; display: none; margin-bottom: 10px; }
+
+.export-buttons { display: flex; gap: 10px; margin-bottom: 10px; }
+.export-buttons button { background-color: #3498db; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
+.export-buttons button:hover { background-color: #217dbb; }
+.sort-filter-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+#sort-metric { background-color: #333; border: 1px solid #555; color: #e0e0e0; padding: 5px; border-radius: 4px; }
+#content-publication-analytics { margin-top: 20px; }
+#publication-results { margin-top: 15px; }
+#search-publication-btn { background-color: #3498db; border: none; color: white; padding: 8px 15px; cursor: pointer; border-radius: 0 4px 4px 0; }
+#publication-input { flex-grow: 1; background-color: #333; border: 1px solid #555; color: #e0e0e0; padding: 8px; border-radius: 4px 0 0 4px; }
+
+.visualization-section { margin: 20px 0; background: #232323; border-radius: 8px; padding: 15px; }
+#stats-chart { background: #181818; border-radius: 8px; width: 100%; max-width: 100%; }
+#milestone-progress-bar { width: 100%; margin-bottom: 5px; }
+#milestone-label { font-size: 1em; color: #a0a0a0; margin: 0; }
+.history-section { margin: 20px 0; }
+#view-history-btn { background-color: #3498db; border: none; color: white; padding: 8px 15px; cursor: pointer; border-radius: 4px; }
+.modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background: rgba(0,0,0,0.7); }
+.modal-content { background: #232323; margin: 10% auto; padding: 20px; border-radius: 8px; width: 80%; max-width: 500px; color: #e0e0e0; position: relative; }
+.close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+.close:hover, .close:focus { color: #fff; text-decoration: none; cursor: pointer; }
+#history-list { max-height: 300px; overflow-y: auto; margin-top: 10px; }

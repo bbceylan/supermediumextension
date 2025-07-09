@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('author-input').addEventListener('keyup', (event) => {
     if (event.key === 'Enter') fetchAndDisplayAuthorStats();
   });
+  document.getElementById('export-csv-btn').addEventListener('click', exportArticlesToCSV);
+  document.getElementById('export-image-btn').addEventListener('click', exportArticlesToImage);
+  document.getElementById('sort-metric').addEventListener('change', () => renderPersonalStats(window._lastPersonalStatsData));
+  document.getElementById('search-publication-btn').addEventListener('click', fetchAndDisplayPublicationStats);
 });
 
 // Store cached data with a timestamp so authors can track trends over time
@@ -96,6 +100,7 @@ async function fetchAndDisplayPersonalStats() {
 
     renderPersonalStats(statsData.data);
     cacheData('personalStatsHistory', statsData.data);
+    await fetchAndDisplayEarnings();
     
   } catch (error) {
     console.error("Personal Stats Error:", error);
@@ -108,17 +113,181 @@ async function fetchAndDisplayPersonalStats() {
   }
 }
 
-function renderPersonalStats(data) {
+// --- EXPORT LOGIC ---
+function exportArticlesToCSV() {
+  const table = document.getElementById('articles-table');
+  let csv = '';
+  for (let row of table.rows) {
+    let rowData = [];
+    for (let cell of row.cells) {
+      rowData.push('"' + cell.innerText.replace(/"/g, '""') + '"');
+    }
+    csv += rowData.join(',') + '\n';
+  }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'medium-articles.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportArticlesToImage() {
+  const table = document.getElementById('articles-table');
+  html2canvas(table).then(canvas => {
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = 'medium-articles.png';
+    a.click();
+  });
+}
+
+// --- ADVANCED METRICS & SORTING ---
+async function fetchClapsAndFansForArticles(articles) {
+  // Fetch claps and fans for each article by scraping its Medium page
+  const results = await Promise.all(articles.map(async (post) => {
+    try {
+      const response = await fetch(`https://medium.com/p/${post.id}`);
+      if (!response.ok) throw new Error('Failed to fetch article');
+      const html = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      // Claps: look for button or span with aria-label or data-test-id
+      let claps = 0;
+      const clapsEl = doc.querySelector('[data-test-id="clapCount"]') || doc.querySelector('button[aria-label*="clap"] span');
+      if (clapsEl) {
+        const match = clapsEl.textContent.replace(/,/g, '').match(/\d+/);
+        if (match) claps = parseInt(match[0], 10);
+      }
+      // Fans: look for a span or element with "fans" or "followers" (not always available)
+      let fans = 0;
+      const fansEl = doc.querySelector('[data-test-id="fansCount"]') || doc.querySelector('span:contains("fans")');
+      if (fansEl) {
+        const match = fansEl.textContent.replace(/,/g, '').match(/\d+/);
+        if (match) fans = parseInt(match[0], 10);
+      }
+      return { ...post, claps, fans };
+    } catch {
+      return { ...post, claps: 0, fans: 0 };
+    }
+  }));
+  return results;
+}
+
+// Chart.js CDN loader
+function loadChartJs(callback) {
+  if (window.Chart) return callback();
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+  script.onload = callback;
+  document.head.appendChild(script);
+}
+
+function getMilestone(totalViews) {
+  // Next milestone is next power of 10 (1K, 10K, 100K, etc.)
+  if (totalViews < 1000) return 1000;
+  const exp = Math.floor(Math.log10(totalViews));
+  return Math.pow(10, exp + 1);
+}
+
+function updateMilestoneProgress(totalViews) {
+  const milestone = getMilestone(totalViews);
+  const percent = Math.min(100, (totalViews / milestone) * 100);
+  document.getElementById('milestone-progress').style.width = percent + '%';
+  document.getElementById('milestone-label').textContent = `${totalViews.toLocaleString()} / ${milestone.toLocaleString()} views`;
+}
+
+function renderStatsChart(articles) {
+  loadChartJs(() => {
+    const ctx = document.getElementById('stats-chart').getContext('2d');
+    if (window._statsChart) window._statsChart.destroy();
+    window._statsChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: articles.map(a => a.title.slice(0, 20) + (a.title.length > 20 ? '…' : '')),
+        datasets: [
+          { label: 'Views', data: articles.map(a => a.totalStats.views), backgroundColor: '#3498db' },
+          { label: 'Reads', data: articles.map(a => a.totalStats.reads), backgroundColor: '#2ecc71' },
+          { label: 'Claps', data: articles.map(a => a.claps), backgroundColor: '#f1c40f' }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: true } },
+        scales: { x: { stacked: true }, y: { beginAtZero: true } }
+      }
+    });
+  });
+}
+
+function saveStatsHistory(data) {
+  chrome.storage.local.get(['statsHistory'], result => {
+    const history = result.statsHistory || [];
+    history.push({ timestamp: new Date().toISOString(), data });
+    chrome.storage.local.set({ statsHistory: history });
+  });
+}
+
+function showStatsHistory() {
+  chrome.storage.local.get(['statsHistory'], result => {
+    const history = result.statsHistory || [];
+    const list = document.getElementById('history-list');
+    list.innerHTML = '';
+    if (history.length === 0) {
+      list.innerHTML = '<p>No history available.</p>';
+      return;
+    }
+    history.slice().reverse().forEach(entry => {
+      const div = document.createElement('div');
+      div.className = 'history-entry';
+      const date = new Date(entry.timestamp).toLocaleString();
+      div.innerHTML = `<strong>${date}</strong><pre>${JSON.stringify(entry.data, null, 2)}</pre>`;
+      list.appendChild(div);
+    });
+  });
+}
+
+document.getElementById('view-history-btn').addEventListener('click', () => {
+  document.getElementById('history-modal').style.display = 'block';
+  showStatsHistory();
+});
+document.getElementById('close-history-modal').addEventListener('click', () => {
+  document.getElementById('history-modal').style.display = 'none';
+});
+window.onclick = function(event) {
+  const modal = document.getElementById('history-modal');
+  if (event.target === modal) modal.style.display = 'none';
+};
+
+// Update renderPersonalStats to update milestone, chart, and save history
+async function renderPersonalStats(data) {
   if (!data || !data.user) return;
-  
+  window._lastPersonalStatsData = data;
   document.getElementById('follower-count').textContent = data.user.socialStats.followerCount.toLocaleString() || '0';
-  const articles = data.user.postsConnection.edges.map(edge => edge.node);
-  
-  articles.sort((a, b) => b.totalStats.views - a.totalStats.views);
+  let articles = data.user.postsConnection.edges.map(edge => edge.node);
   const tableBody = document.querySelector('#articles-table tbody');
+  tableBody.innerHTML = '<tr><td colspan="7">Loading claps and fans...</td></tr>';
+  articles = await fetchClapsAndFansForArticles(articles);
+  const sortMetric = document.getElementById('sort-metric').value;
+  articles.sort((a, b) => {
+    if (sortMetric === 'views') return b.totalStats.views - a.totalStats.views;
+    if (sortMetric === 'reads') return b.totalStats.reads - a.totalStats.reads;
+    if (sortMetric === 'readPercent') {
+      const aPct = a.totalStats.views ? a.totalStats.reads / a.totalStats.views : 0;
+      const bPct = b.totalStats.views ? b.totalStats.reads / b.totalStats.views : 0;
+      return bPct - aPct;
+    }
+    if (sortMetric === 'claps') return b.claps - a.claps;
+    if (sortMetric === 'fans') return b.fans - a.fans;
+    return 0;
+  });
   tableBody.innerHTML = '';
-  
+  let totalReads = 0, totalViews = 0;
   articles.forEach(post => {
+    totalReads += post.totalStats.reads;
+    totalViews += post.totalStats.views;
+    const readPercent = post.totalStats.views ? ((post.totalStats.reads / post.totalStats.views) * 100).toFixed(1) : '0';
     const row = document.createElement('tr');
     row.id = `post-row-${post.id}`;
     row.className = 'clickable-row';
@@ -126,18 +295,56 @@ function renderPersonalStats(data) {
     row.addEventListener('click', () => {
       chrome.tabs.create({ url: `https://medium.com/p/${post.id}` });
     });
-    
-    const readPercent = post.totalStats.views
-      ? ((post.totalStats.reads / post.totalStats.views) * 100).toFixed(1)
-      : '0';
     row.innerHTML = `
       <td>${post.title}</td>
       <td>${post.totalStats.views.toLocaleString()}</td>
       <td>${post.totalStats.reads.toLocaleString()}</td>
       <td>${readPercent}%</td>
+      <td>${post.claps}</td>
+      <td>${post.fans}</td>
+      <td>--</td>
     `;
     tableBody.appendChild(row);
   });
+  const avgReadPercent = totalViews > 0 ? ((totalReads / totalViews) * 100).toFixed(1) : '0';
+  document.getElementById('avg-read-percent').textContent = avgReadPercent + '%';
+  document.getElementById('earnings').textContent = '--';
+  updateMilestoneProgress(totalViews);
+  renderStatsChart(articles);
+  saveStatsHistory({
+    totalViews,
+    totalReads,
+    avgReadPercent,
+    articles: articles.map(a => ({
+      title: a.title,
+      views: a.totalStats.views,
+      reads: a.totalStats.reads,
+      claps: a.claps,
+      fans: a.fans
+    }))
+  });
+}
+
+async function fetchAndDisplayEarnings() {
+  try {
+    const response = await fetch('https://medium.com/me/partner-program/earnings', { credentials: 'include' });
+    if (!response.ok) throw new Error('Could not fetch earnings page.');
+    const htmlString = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlString, 'text/html');
+    // Try to find the element that contains the total earnings. This selector may need to be updated if Medium changes their UI.
+    let earnings = '--';
+    // Try common selectors for earnings
+    const earningsEl = doc.querySelector('[data-testid="earnings-summary"]') || doc.querySelector('h2, .earnings, .summary');
+    if (earningsEl) {
+      const text = earningsEl.textContent;
+      const match = text.match(/\$[\d,.]+/);
+      if (match) earnings = match[0];
+    }
+    document.getElementById('earnings').textContent = earnings;
+  } catch (e) {
+    document.getElementById('earnings').textContent = '--';
+  }
 }
 
 // --- TAG SEARCH LOGIC ---
@@ -274,4 +481,37 @@ async function fetchAndDisplayAuthorStats() {
     } finally {
         loader.style.display = 'none';
     }
+}
+
+// --- PUBLICATION ANALYTICS ---
+async function fetchAndDisplayPublicationStats() {
+  const loader = document.getElementById('loader');
+  const errorEl = document.getElementById('error-message-publication');
+  const resultsEl = document.getElementById('publication-results');
+  const pubInput = document.getElementById('publication-input').value.trim();
+  if (!pubInput) return;
+  loader.style.display = 'block';
+  errorEl.style.display = 'none';
+  resultsEl.innerHTML = '';
+  try {
+    // Try to fetch publication page and parse stats (scraping, as API is limited)
+    const pubUrl = pubInput.startsWith('http') ? pubInput : `https://medium.com/${pubInput}`;
+    const response = await fetch(pubUrl);
+    if (!response.ok) throw new Error('Could not fetch publication page.');
+    const htmlString = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlString, 'text/html');
+    // Try to extract publication stats (followers, articles, etc.)
+    let followers = '--', articles = '--';
+    const followersEl = doc.querySelector('[data-testid="followersCount"]') || doc.querySelector('a[href$="/followers"]');
+    if (followersEl) followers = followersEl.textContent.match(/\d+[,.]?\d*/g)?.[0] || '--';
+    const articlesEl = doc.querySelectorAll('article');
+    articles = articlesEl.length;
+    resultsEl.innerHTML = `<div class="summary-card"><h3>Publication Stats</h3><p>Followers: ${followers}</p><p>Articles: ${articles}</p></div>`;
+  } catch (error) {
+    errorEl.textContent = `Error: ${error.message}`;
+    errorEl.style.display = 'block';
+  } finally {
+    loader.style.display = 'none';
+  }
 }

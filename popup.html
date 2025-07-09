@@ -16,6 +16,7 @@
       <button id="tab-my-stats" class="tab-link active">My Stats</button>
       <button id="tab-tag-search" class="tab-link">Tag Search</button>
       <button id="tab-author-search" class="tab-link">Author Search</button>
+      <button id="tab-publication-analytics" class="tab-link">Publication Analytics</button>
     </div>
 
     <div id="content-my-stats" class="tab-content active">
@@ -25,8 +26,30 @@
           <h3>Followers</h3>
           <p id="follower-count">--</p>
         </div>
+        <div class="summary-card">
+          <h3>Avg Read %</h3>
+          <p id="avg-read-percent">--</p>
+        </div>
+        <div class="summary-card">
+          <h3>Earnings</h3>
+          <p id="earnings">--</p>
+        </div>
         <div class="articles-section">
           <h3>Latest 100 Articles (by performance)</h3>
+          <div class="export-buttons">
+            <button id="export-csv-btn">Export CSV</button>
+            <button id="export-image-btn">Export Image</button>
+          </div>
+          <div class="sort-filter-controls">
+            <label for="sort-metric">Sort by:</label>
+            <select id="sort-metric">
+              <option value="views">Views</option>
+              <option value="reads">Reads</option>
+              <option value="readPercent">Read %</option>
+              <option value="claps">Claps</option>
+              <option value="fans">Fans</option>
+            </select>
+          </div>
           <table id="articles-table">
             <thead>
               <tr>
@@ -34,10 +57,34 @@
                 <th>Views</th>
                 <th>Reads</th>
                 <th>Read %</th>
+                <th>Claps</th>
+                <th>Fans</th>
+                <th>Earnings</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
+        </div>
+        <div class="summary-card">
+          <h3>Milestone Progress</h3>
+          <div id="milestone-progress-bar" style="height: 18px; background: #333; border-radius: 8px; overflow: hidden; margin: 10px 0;">
+            <div id="milestone-progress" style="height: 100%; background: #3498db; width: 0%; transition: width 0.5s;"></div>
+          </div>
+          <p id="milestone-label">--</p>
+        </div>
+        <div class="visualization-section">
+          <h3>Visualizations</h3>
+          <canvas id="stats-chart" height="180"></canvas>
+        </div>
+        <div class="history-section">
+          <button id="view-history-btn">View Stats History</button>
+          <div id="history-modal" class="modal" style="display:none;">
+            <div class="modal-content">
+              <span id="close-history-modal" class="close">&times;</span>
+              <h3>Stats History</h3>
+              <div id="history-list"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -64,6 +111,15 @@
       </div>
       <div id="error-message-author" class="error"></div>
       <div id="author-results"></div>
+    </div>
+
+    <div id="content-publication-analytics" class="tab-content">
+      <div class="search-bar">
+        <input type="text" id="publication-input" placeholder="Enter a publication name or URL">
+        <button id="search-publication-btn">Search Publication</button>
+      </div>
+      <div id="error-message-publication" class="error"></div>
+      <div id="publication-results"></div>
     </div>
 
   </div>
