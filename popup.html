@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Super Medium Stats v5.1</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="icons/icon48.png" class="logo">
+      <h2>Super Stats</h2>
+      <div id="loader" class="loader"></div>
+    </div>
+
+    <div class="tab-nav">
+      <button id="tab-my-stats" class="tab-link active">My Stats</button>
+      <button id="tab-tag-search" class="tab-link">Tag Search</button>
+      <button id="tab-author-search" class="tab-link">Author Search</button>
+    </div>
+
+    <div id="content-my-stats" class="tab-content active">
+      <div id="error-message-personal" class="error"></div>
+      <div id="stats-content-personal">
+        <div class="summary-card">
+          <h3>Followers</h3>
+          <p id="follower-count">--</p>
+        </div>
+        <div class="articles-section">
+          <h3>Latest 100 Articles (by performance)</h3>
+          <table id="articles-table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Views</th>
+                <th>Reads</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="content-tag-search" class="tab-content">
+      <div class="search-bar">
+        <input type="text" id="tag-input" placeholder="Enter a tag (e.g., 'ai')">
+        <button id="search-tag-btn">Analyze Tag</button>
+      </div>
+      <div id="trends-summary" style="display: none;">
+        <div class="summary-card">
+          <h3>Total Stories in Tag</h3>
+          <p id="total-stories-count">--</p>
+        </div>
+      </div>
+      <div id="error-message-trends" class="error"></div>
+      <div id="trends-results"></div>
+    </div>
+    
+    <div id="content-author-search" class="tab-content">
+       <div class="search-bar">
+        <input type="text" id="author-input" placeholder="Enter a username (e.g., 'bberkerceylan')">
+        <button id="search-author-btn">Search Author</button>
+      </div>
+      <div id="error-message-author" class="error"></div>
+      <div id="author-results"></div>
+    </div>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
