@@ -4,7 +4,7 @@ This Chrome extension provides a quick overview of Medium activity directly from
 
 ## Features
 
-- **My Stats**: Displays follower count and the latest 100 posts sorted by views, including read percentage.
+- **My Stats**: Displays follower count and scrapes each article's title, views, reads and earnings. The latest 100 posts are shown sorted by views, including read percentage.
 - **Tag Search**: Shows total story count and top articles for any tag.
 - **Author Search**: Lists recent stories from any Medium author.
 
