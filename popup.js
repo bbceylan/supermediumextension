@@ -127,10 +127,14 @@ function renderPersonalStats(data) {
       chrome.tabs.create({ url: `https://medium.com/p/${post.id}` });
     });
     
+    const readPercent = post.totalStats.views
+      ? ((post.totalStats.reads / post.totalStats.views) * 100).toFixed(1)
+      : '0';
     row.innerHTML = `
       <td>${post.title}</td>
       <td>${post.totalStats.views.toLocaleString()}</td>
       <td>${post.totalStats.reads.toLocaleString()}</td>
+      <td>${readPercent}%</td>
     `;
     tableBody.appendChild(row);
   });
