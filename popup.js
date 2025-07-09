@@ -848,7 +848,8 @@ async function fetchAndDisplayAuthorStats() {
         const response = await fetch('https://medium.com/_/graphql', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(authorQuery)
+            body: JSON.stringify(authorQuery),
+            credentials: 'include'
         });
 
         const authorData = await response.json();
