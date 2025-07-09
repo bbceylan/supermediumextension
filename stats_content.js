@@ -1,5 +1,55 @@
 console.log('[SuperStats] Content script loaded');
 
+// Attempt to parse article stats from any embedded Apollo state script.
+function extractFromApolloState() {
+  const script = Array.from(document.querySelectorAll('script')).find(s =>
+    s.textContent.includes('__APOLLO_STATE__')
+  );
+  if (!script) return [];
+  const match = script.textContent.match(/__APOLLO_STATE__\s*=\s*(\{.*\})/);
+  if (!match) return [];
+  try {
+    const state = JSON.parse(match[1]);
+    const articles = [];
+    const postTitles = {};
+    for (const [key, value] of Object.entries(state)) {
+      if (key.startsWith('Post:') && value && value.title) {
+        const id = key.split(':')[1];
+        postTitles[id] = value.title;
+      }
+    }
+    for (const [key, value] of Object.entries(state)) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        'views' in value &&
+        'reads' in value &&
+        key.includes('PostStats:')
+      ) {
+        const id = value.postId || key.split(':')[1];
+        const title = postTitles[id] || '';
+        let earnings = '';
+        if (typeof value.earnings === 'string') {
+          earnings = value.earnings;
+        } else if (value.earnings && typeof value.earnings.amount !== 'undefined') {
+          earnings = '$' + value.earnings.amount;
+        }
+        articles.push({
+          id,
+          title,
+          views: String(value.views),
+          reads: String(value.reads),
+          earnings,
+        });
+      }
+    }
+    return articles;
+  } catch (err) {
+    console.warn('[SuperStats] Failed to parse Apollo state', err);
+    return [];
+  }
+}
+
 function extractTableText(table) {
   const rows = Array.from(table.querySelectorAll('tr'));
   return rows.map(row => {
@@ -148,22 +198,28 @@ logStatsTextNodes();
 // --- Robust Medium Stats Extraction ---
 
 function getArticleRows() {
-  // Try table with known class
-  let rows = document.querySelectorAll('table.ji tbody tr');
+  // Try a couple of known table class patterns first
+  let rows = document.querySelectorAll('table.ji tbody tr, table.stats-table tbody tr');
   if (rows.length) return rows;
 
-  // Fallback: any table with at least 2 columns and a heading
-  let tables = Array.from(document.querySelectorAll('table'));
-  for (let table of tables) {
-    let ths = table.querySelectorAll('th');
-    if (ths.length >= 2 && /title|story|article/i.test(table.textContent)) {
-      return table.querySelectorAll('tbody tr');
-    }
+  // Generic fallback: choose table with many numeric cells
+  const tables = Array.from(document.querySelectorAll('table'));
+  let best = null;
+  let bestScore = 0;
+  for (const table of tables) {
+    const r = table.querySelectorAll('tbody tr');
+    let score = 0;
+    r.forEach(row => {
+      const nums = Array.from(row.querySelectorAll('td')).filter(td => /[\d$]/.test(td.textContent)).length;
+      if (nums >= 3) score++;
+    });
+    if (score > bestScore) { bestScore = score; best = r; }
   }
+  if (best && best.length) return best;
 
-  // Fallback: look for divs with lots of children and text
-  let divs = Array.from(document.querySelectorAll('div')).filter(d => d.children.length > 5 && d.textContent.length > 100);
-  // Could add more heuristics here if needed
+  // Last resort: tables marked with role="table"
+  rows = document.querySelectorAll('[role="table"] tbody tr');
+  if (rows.length) return rows;
   return [];
 }
 
@@ -193,25 +249,36 @@ function waitForStatsTable(callback, timeout = 10000) {
 function extractStatsFromRow(row) {
   const tds = row.querySelectorAll('td');
   let date = '', title = '', views = '', reads = '', earnings = '';
-  if (tds.length >= 5) {
+  if (tds.length >= 2) {
     date = tds[0].textContent.trim();
-    const h2 = tds[1].querySelector('h2');
-    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
-    views = tds[2].textContent.trim();
-    reads = tds[3].textContent.trim();
-    earnings = tds[4].textContent.trim();
-  } else if (tds.length >= 2) {
-    // Fallback: just date and title
-    date = tds[0].textContent.trim();
-    const h2 = tds[1].querySelector('h2');
-    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
+    const titleEl = tds[1].querySelector('h2, a');
+    title = titleEl ? titleEl.textContent.trim() : tds[1].textContent.trim();
+
+    const numericCells = Array.from(tds).slice(2).map(td => td.textContent.trim());
+    numericCells.forEach(text => {
+      if (!views && /^\d+[\d,\.Kk]*$/.test(text)) {
+        views = text;
+      } else if (!reads && /^\d+[\d,\.Kk]*$/.test(text)) {
+        reads = text;
+      } else if (!earnings && /^\$/.test(text)) {
+        earnings = text;
+      }
+    });
   }
   return { date, title, views, reads, earnings };
 }
 
 function robustExtractArticles(callback) {
+  // First try parsing embedded Apollo state (if available)
+  let articles = extractFromApolloState();
+  if (articles.length) {
+    callback(articles);
+    return;
+  }
+
+  // Fallback to DOM table scraping
   waitForStatsTable((rows) => {
-    const articles = [];
+    articles = [];
     rows.forEach(row => {
       try {
         articles.push(extractStatsFromRow(row));
@@ -255,5 +322,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       sendResponse({ articles, followerCount });
     });
-  }
-}); 
+  }}); 
