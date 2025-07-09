@@ -14,6 +14,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Store cached data with a timestamp so authors can track trends over time
+function cacheData(key, value) {
+  const entry = { timestamp: new Date().toISOString(), data: value };
+  chrome.storage.local.get([key], result => {
+    const history = result[key] || [];
+    history.push(entry);
+    chrome.storage.local.set({ [key]: history });
+  });
+}
+
 function initTabs() {
   const tabLinks = document.querySelectorAll('.tab-link');
   const tabContents = document.querySelectorAll('.tab-content');
@@ -83,8 +93,9 @@ async function fetchAndDisplayPersonalStats() {
     });
     const statsData = await statsResponse.json();
     if (statsData.errors) throw new Error(statsData.errors[0].message);
-    
+
     renderPersonalStats(statsData.data);
+    cacheData('personalStatsHistory', statsData.data);
     
   } catch (error) {
     console.error("Personal Stats Error:", error);
@@ -156,6 +167,7 @@ async function fetchAndDisplayTagTrends() {
     if (articles.length === 0) throw new Error(`No articles found. Medium's page structure may have changed.`);
     
     resultsEl.innerHTML = `<h3>Top stories in '${tag}'</h3>`;
+    const cacheItems = [];
     articles.forEach(article => {
       const titleEl = article.querySelector('h2');
       const authorEl = article.querySelector('p a[href*="/@"]');
@@ -175,7 +187,9 @@ async function fetchAndDisplayTagTrends() {
         <p class="trend-author">by ${author}</p>
       `;
       resultsEl.appendChild(articleDiv);
+      cacheItems.push({ title, author, link: articleLink });
     });
+    cacheData('tagTrendsHistory', { tag, articles: cacheItems });
   } catch (error) {
     console.error("Tag Trends Error:", error);
     errorEl.textContent = `Error: ${error.message}`;
@@ -235,6 +249,7 @@ async function fetchAndDisplayAuthorStats() {
         const user = authorData.data.user;
         resultsEl.innerHTML = `<h3>Recent Articles by ${user.name}</h3>`;
         const posts = user.postsConnection.edges.map(edge => edge.node);
+        const cacheItems = [];
 
         posts.forEach(post => {
             const articleDiv = document.createElement('div');
@@ -243,7 +258,10 @@ async function fetchAndDisplayAuthorStats() {
                 <h4 class="trend-title"><a href="https://medium.com/p/${post.id}" target="_blank" rel="noopener noreferrer">${post.title}</a></h4>
             `;
             resultsEl.appendChild(articleDiv);
+            cacheItems.push({ id: post.id, title: post.title });
         });
+
+        cacheData('authorStatsHistory', { username, posts: cacheItems });
 
     } catch (error) {
         console.error("Author Search Error:", error);
@@ -251,4 +269,3 @@ async function fetchAndDisplayAuthorStats() {
         errorEl.style.display = 'block';
     } finally {
         loader.style.display = 'none';
-    }}
