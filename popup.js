@@ -269,4 +269,3 @@ async function fetchAndDisplayAuthorStats() {
         errorEl.style.display = 'block';
     } finally {
         loader.style.display = 'none';
-    }}
