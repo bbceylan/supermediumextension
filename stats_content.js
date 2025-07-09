@@ -40,67 +40,33 @@ function logCandidates() {
   });
 }
 
-function extractArticlesFromDiv() {
-  // Find the div with the most 'View story' or 'Reads'/'Views' occurrences
-  const divs = Array.from(document.querySelectorAll('div'));
-  let bestDiv = null;
-  let maxMatches = 0;
-  for (const div of divs) {
-    const txt = div.textContent;
-    const matches = (txt.match(/View story|Reads|Views/g) || []).length;
-    if (matches > maxMatches) {
-      maxMatches = matches;
-      bestDiv = div;
-    }
+function extractArticlesFromTable() {
+  // Find the stats table with the new obfuscated class
+  const statsTable = document.querySelector('table.ji');
+  if (!statsTable) {
+    console.warn('[SuperStats] Stats table not found');
+    return [];
   }
-  if (!bestDiv) return [];
-  const text = bestDiv.textContent;
-  console.log('[SuperStats] Using div for extraction:', text.slice(0, 1000));
-  // Split by 'Earnings' (each article ends with 'Earnings')
-  const articleBlocks = text.split('Earnings').filter(block => block.includes('View story'));
-  const articles = articleBlocks.map((block, idx) => {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    let viewStoryIdx = lines.findIndex(l => l.includes('View story'));
-    let title = '--';
-    if (viewStoryIdx > 0) {
-      for (let i = viewStoryIdx - 1; i >= 0; i--) {
-        if (lines[i] && !/^\d+[.,]?\d*[Kk]?$/.test(lines[i]) && !lines[i].match(/Views|Reads|Earnings|\$/i)) {
-          title = lines[i];
-          break;
-        }
-      }
+  const rows = statsTable.querySelectorAll('tbody tr');
+  const articles = [];
+  rows.forEach(row => {
+    const tds = row.querySelectorAll('td');
+    if (tds.length >= 2) {
+      // Date (e.g., "Jul 2025")
+      const dateDiv = tds[0].querySelector('div');
+      const date = dateDiv ? dateDiv.textContent.trim() : '';
+
+      // Title
+      const titleH2 = tds[1].querySelector('h2');
+      const title = titleH2 ? titleH2.textContent.trim() : '';
+
+      // Prepare for future stat extraction from other tds
+      // Example: const views = tds[2]?.textContent.trim() || '';
+
+      articles.push({ date, title });
     }
-    if (title === '--') {
-      title = lines.reduce((a, b) => {
-        if (b.length > a.length && !/^\d+[.,]?\d*[Kk]?$/.test(b) && !b.match(/Views|Reads|Earnings|\$/i)) return b; else return a;
-      }, '--');
-    }
-    let views = 0;
-    const viewsMatch = block.match(/(\d+[.,]?\d*[Kk]?)\s*Views/);
-    if (viewsMatch) {
-      let v = viewsMatch[1].replace(/,/g, '');
-      if (v.endsWith('K')) v = parseFloat(v) * 1000;
-      views = parseInt(v, 10);
-    }
-    let reads = 0;
-    const readsMatch = block.match(/(\d+[.,]?\d*[Kk]?)\s*Reads/);
-    if (readsMatch) {
-      let r = readsMatch[1].replace(/,/g, '');
-      if (r.endsWith('K')) r = parseFloat(r) * 1000;
-      reads = parseInt(r, 10);
-    }
-    let earnings = '--';
-    const earningsMatch = block.match(/\$([\d,.]+)/);
-    if (earningsMatch) earnings = `$${earningsMatch[1]}`;
-    console.log(`[SuperStats] Block #${idx}: title='${title}', views=${views}, reads=${reads}, earnings=${earnings}`);
-    if (title !== '--' && (views > 0 || reads > 0 || earnings !== '--')) {
-      return { title, views, reads, earnings };
-    }
-    return null;
-  }).filter(Boolean);
-  if (articles.length === 0) {
-    console.warn('[SuperStats] No articles found. Raw blocks:', articleBlocks);
-  }
+  });
+  console.log('[SuperStats] Extracted articles from table:', articles);
   return articles;
 }
 
@@ -179,8 +145,115 @@ logStatsTextNodes();
   });
 })();
 
+// --- Robust Medium Stats Extraction ---
+
+function getArticleRows() {
+  // Try table with known class
+  let rows = document.querySelectorAll('table.ji tbody tr');
+  if (rows.length) return rows;
+
+  // Fallback: any table with at least 2 columns and a heading
+  let tables = Array.from(document.querySelectorAll('table'));
+  for (let table of tables) {
+    let ths = table.querySelectorAll('th');
+    if (ths.length >= 2 && /title|story|article/i.test(table.textContent)) {
+      return table.querySelectorAll('tbody tr');
+    }
+  }
+
+  // Fallback: look for divs with lots of children and text
+  let divs = Array.from(document.querySelectorAll('div')).filter(d => d.children.length > 5 && d.textContent.length > 100);
+  // Could add more heuristics here if needed
+  return [];
+}
+
+function waitForStatsTable(callback, timeout = 10000) {
+  let found = false;
+  const check = () => {
+    const rows = getArticleRows();
+    if (rows.length) {
+      found = true;
+      callback(rows);
+    }
+  };
+  check();
+  if (found) return;
+
+  const observer = new MutationObserver(() => {
+    check();
+    if (found) observer.disconnect();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  setTimeout(() => {
+    if (!found) observer.disconnect();
+  }, timeout);
+}
+
+function extractStatsFromRow(row) {
+  const tds = row.querySelectorAll('td');
+  let date = '', title = '', views = '', reads = '', earnings = '';
+  if (tds.length >= 5) {
+    date = tds[0].textContent.trim();
+    const h2 = tds[1].querySelector('h2');
+    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
+    views = tds[2].textContent.trim();
+    reads = tds[3].textContent.trim();
+    earnings = tds[4].textContent.trim();
+  } else if (tds.length >= 2) {
+    // Fallback: just date and title
+    date = tds[0].textContent.trim();
+    const h2 = tds[1].querySelector('h2');
+    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
+  }
+  return { date, title, views, reads, earnings };
+}
+
+function robustExtractArticles(callback) {
+  waitForStatsTable((rows) => {
+    const articles = [];
+    rows.forEach(row => {
+      try {
+        articles.push(extractStatsFromRow(row));
+      } catch (e) {
+        console.error('[SuperStats] Error extracting row:', e, row);
+      }
+    });
+    if (!articles.length) {
+      console.warn('[SuperStats] No articles extracted. Medium may have changed their layout.');
+    }
+    callback(articles);
+  });
+}
+
+// --- End Robust Extraction ---
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   console.log('[SuperStats] Received message:', msg);
-  // No extraction, just logging for now
-  sendResponse({ articles: [] });
+  if (msg && msg.type === 'SUPERSTATS_REQUEST_STATS') {
+    robustExtractArticles((articles) => {
+      // Try to extract follower count from the best div
+      let followerCount = null;
+      const divs = Array.from(document.querySelectorAll('div'));
+      let bestDiv = null;
+      let maxMatches = 0;
+      for (const div of divs) {
+        const txt = div.textContent;
+        const matches = (txt.match(/Followers/g) || []).length;
+        if (matches > maxMatches) {
+          maxMatches = matches;
+          bestDiv = div;
+        }
+      }
+      if (bestDiv) {
+        const match = bestDiv.textContent.match(/(\d+[,.]?\d*[Kk]?)\s*Followers/);
+        if (match) {
+          let v = match[1].replace(/,/g, '');
+          if (v.endsWith('K')) v = parseFloat(v) * 1000;
+          followerCount = parseInt(v, 10);
+        }
+      }
+      sendResponse({ articles, followerCount });
+    });
+  }
 }); 

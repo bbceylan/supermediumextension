@@ -19,6 +19,42 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('viz-tab-views').addEventListener('click', () => setVizTab('views'));
   document.getElementById('viz-tab-reads').addEventListener('click', () => setVizTab('reads'));
   document.getElementById('viz-tab-claps').addEventListener('click', () => setVizTab('claps'));
+  document.getElementById('export-history-btn').addEventListener('click', () => {
+    chrome.storage.local.get(['personalStatsHistory'], result => {
+      const history = result.personalStatsHistory || [];
+      const blob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'superstats-history.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  });
+
+  document.getElementById('import-history-btn').addEventListener('click', () => {
+    document.getElementById('import-history-file').click();
+  });
+
+  document.getElementById('import-history-file').addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!Array.isArray(data)) throw new Error('Invalid history file');
+        chrome.storage.local.set({ personalStatsHistory: data }, () => {
+          alert('Stats history imported! Reloading...');
+          window.location.reload();
+        });
+      } catch (err) {
+        alert('Import failed: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+  renderSettings();
 });
 
 // Store cached data with a timestamp so authors can track trends over time
@@ -41,6 +77,7 @@ function initTabs() {
       tab.classList.add('active');
       const contentId = tab.id.replace('tab-', 'content-');
       document.getElementById(contentId).classList.add('active');
+      if (tab.id === 'tab-trending') fetchAndDisplayTrendingArticles();
     });
   });
 }
@@ -57,8 +94,8 @@ async function fetchAndDisplayPersonalStats() {
 
   console.log('[SuperStats] Popup: Requesting stats from content script...');
 
-  function handleStats(articles, error) {
-    console.log('[SuperStats] Popup: Received stats:', articles, 'Error:', error);
+  function handleStats(articles, error, followerCount) {
+    console.log('[SuperStats] Popup: Received stats:', articles, 'Error:', error, 'FollowerCount:', followerCount);
     if (error) {
       errorEl.textContent = 'Error: ' + error;
       errorEl.style.display = 'block';
@@ -74,10 +111,19 @@ async function fetchAndDisplayPersonalStats() {
     const parsed = articles.map(a => ({
       title: a.title,
       totalStats: { views: a.views, reads: a.reads },
-      fans: a.fans
+      fans: a.fans,
+      claps: a.claps,
+      comments: a.comments,
+      earnings: a.earnings
     }));
-    renderPersonalStats({ user: { postsConnection: { edges: parsed.map(a => ({ node: a })) } } });
-    cacheData('personalStatsHistory', { user: { postsConnection: { edges: parsed.map(a => ({ node: a })) } } });
+    renderPersonalStats({ user: { postsConnection: { edges: parsed.map(a => ({ node: a })) } }, followerCount });
+    cacheData('personalStatsHistory', { user: { postsConnection: { edges: parsed.map(a => ({ node: a })) } }, followerCount });
+    if (typeof followerCount === 'number') {
+      const followerEl = document.getElementById('follower-count');
+      if (followerEl) followerEl.textContent = followerCount.toLocaleString();
+      // Render follower growth chart and delta
+      renderFollowerGrowthChart();
+    }
     errorEl.style.display = 'none';
     loader.style.display = 'none';
     contentEl.style.display = 'block';
@@ -87,7 +133,7 @@ async function fetchAndDisplayPersonalStats() {
   chrome.runtime.onMessage.addListener(function listener(msg, sender, sendResponse) {
     if (msg && msg.type === 'SUPERSTATS_STATS') {
       chrome.runtime.onMessage.removeListener(listener);
-      handleStats(msg.articles, msg.error);
+      handleStats(msg.articles, msg.error, msg.followerCount);
     }
   });
 
@@ -121,7 +167,7 @@ async function fetchAndDisplayPersonalStats() {
         return;
       }
       if (response && response.articles) {
-        handleStats(response.articles, response.error);
+        handleStats(response.articles, response.error, response.followerCount);
       } else {
         errorEl.innerHTML = 'If your stats do not appear, please refresh <a href="https://medium.com/me/stats" target="_blank">your Medium stats page</a> and click the button below.' +
           '<br><button id="superstats-retry-btn">Retry</button>';
@@ -168,7 +214,7 @@ function exportArticlesToImage() {
 
 // --- ADVANCED METRICS & SORTING ---
 async function fetchFansForArticles(articles) {
-  // Fetch fans for each article by scraping its Medium page
+  // Fetch fans, claps, and comments for each article by scraping its Medium page
   const delay = ms => new Promise(res => setTimeout(res, ms));
   const results = [];
   for (const post of articles) {
@@ -178,6 +224,7 @@ async function fetchFansForArticles(articles) {
       const html = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
+      // --- Fans ---
       let fans = 0;
       let fansEl = doc.querySelector('[data-test-id="fansCount"]');
       if (fansEl && fansEl.textContent.match(/\d/)) {
@@ -195,9 +242,46 @@ async function fetchFansForArticles(articles) {
           if (match) fans = parseInt(match[1].replace(/,/g, ''), 10);
         }
       }
-      results.push({ ...post, fans });
+      // --- Claps ---
+      let claps = 0;
+      // Try aria-label (e.g., "123 claps")
+      let clapsEl = Array.from(doc.querySelectorAll('[aria-label]')).find(el => /clap/i.test(el.getAttribute('aria-label')));
+      if (clapsEl) {
+        const match = clapsEl.getAttribute('aria-label').replace(/,/g, '').match(/(\d+[.,]?\d*[Kk]?)/);
+        if (match) {
+          let v = match[1];
+          if (v.endsWith('K')) v = parseFloat(v) * 1000;
+          claps = parseInt(v, 10);
+        }
+      } else {
+        // Fallback: look for text like "123 claps"
+        const textMatch = html.match(/([0-9]{1,3}(?:,[0-9]{3})*|\d+[Kk]?)\s*claps?/i);
+        if (textMatch) {
+          let v = textMatch[1].replace(/,/g, '');
+          if (v.endsWith('K')) v = parseFloat(v) * 1000;
+          claps = parseInt(v, 10);
+        }
+      }
+      // --- Comments/Responses ---
+      let comments = 0;
+      // Look for "X responses" or "X comments"
+      const respMatch = html.match(/([0-9]{1,3}(?:,[0-9]{3})*|\d+)\s*(responses|comments)/i);
+      if (respMatch) {
+        comments = parseInt(respMatch[1].replace(/,/g, ''), 10);
+      } else {
+        // Fallback: look for elements with comment icon and number
+        const commentEls = Array.from(doc.querySelectorAll('a, span, div')).filter(el => /comment|response/i.test(el.textContent));
+        for (const el of commentEls) {
+          const numMatch = el.textContent.replace(/,/g, '').match(/(\d+)/);
+          if (numMatch) {
+            comments = parseInt(numMatch[1], 10);
+            break;
+          }
+        }
+      }
+      results.push({ ...post, fans, claps, comments });
     } catch {
-      results.push({ ...post, fans: 0 });
+      results.push({ ...post, fans: 0, claps: 0, comments: 0 });
     }
     await delay(300); // avoid rate-limiting
   }
@@ -262,11 +346,11 @@ function renderStatsChart(articles) {
     let label, data, color;
     if (currentVizTab === 'views') {
       label = 'Views';
-      data = articles.map(a => a.totalStats.views);
+      data = articles.map(a => parseInt(a.totalStats.views) || 0);
       color = colors.views;
     } else if (currentVizTab === 'reads') {
       label = 'Reads';
-      data = articles.map(a => a.totalStats.reads);
+      data = articles.map(a => parseInt(a.totalStats.reads) || 0);
       color = colors.reads;
     } else {
       label = 'Claps';
@@ -274,7 +358,7 @@ function renderStatsChart(articles) {
       color = colors.claps;
     }
     chartData = {
-      labels: articles.map(a => a.title.slice(0, 20) + (a.title.length > 20 ? '…' : '')),
+      labels: articles.map(a => (a.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').slice(0, 20) + (a.title.length > 20 ? '…' : '')),
       datasets: [
         { label, data, backgroundColor: color, borderColor: '#fff', borderWidth: 2 }
       ]
@@ -356,14 +440,14 @@ async function renderPersonalStats(data) {
   let articles = data.user.postsConnection.edges.map(edge => edge.node);
   window._lastPersonalStatsArticles = articles;
   const tableBody = document.querySelector('#articles-table tbody');
-  tableBody.innerHTML = '<tr><td colspan="6">Loading fans and earnings...</td></tr>';
+  tableBody.innerHTML = '<tr><td colspan="8">Loading fans and earnings...</td></tr>';
   articles = await fetchFansForArticles(articles);
   articles = await fetchPerArticleEarnings(articles);
   window._lastPersonalStatsArticles = articles;
   const sortMetric = document.getElementById('sort-metric').value;
   articles.sort((a, b) => {
-    if (sortMetric === 'views') return b.totalStats.views - a.totalStats.views;
-    if (sortMetric === 'reads') return b.totalStats.reads - a.totalStats.reads;
+    if (sortMetric === 'views') return (parseInt(b.totalStats.views)||0) - (parseInt(a.totalStats.views)||0);
+    if (sortMetric === 'reads') return (parseInt(b.totalStats.reads)||0) - (parseInt(a.totalStats.reads)||0);
     if (sortMetric === 'readPercent') {
       const aPct = a.totalStats.views ? a.totalStats.reads / a.totalStats.views : 0;
       const bPct = b.totalStats.views ? b.totalStats.reads / b.totalStats.views : 0;
@@ -375,11 +459,16 @@ async function renderPersonalStats(data) {
   tableBody.innerHTML = '';
   let totalReads = 0, totalViews = 0;
   articles.forEach(post => {
-    totalReads += post.totalStats.reads;
-    totalViews += post.totalStats.views;
-    const readPercent = post.totalStats.views ? ((post.totalStats.reads / post.totalStats.views) * 100).toFixed(1) : '0';
+    // Parse numbers safely
+    const views = parseInt(post.totalStats.views) || 0;
+    const reads = parseInt(post.totalStats.reads) || 0;
+    totalReads += reads;
+    totalViews += views;
+    const readPercent = views ? ((reads / views) * 100).toFixed(1) : '0';
     const fans = typeof post.fans === 'number' ? post.fans : '--';
-    const earnings = post.earnings !== '--' ? post.earnings : `<span title='Per-article earnings not found. See summary above.'>--</span>`;
+    const earnings = post.earnings && post.earnings !== '--' ? post.earnings : `<span title='Per-article earnings not found. See summary above.'>--</span>`;
+    // Fix encoding issues in title
+    const safeTitle = (post.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const row = document.createElement('tr');
     row.id = `post-row-${post.id}`;
     row.className = 'clickable-row';
@@ -388,12 +477,14 @@ async function renderPersonalStats(data) {
       chrome.tabs.create({ url: `https://medium.com/p/${post.id}` });
     });
     row.innerHTML = `
-      <td>${post.title}</td>
-      <td>${post.totalStats.views.toLocaleString()}</td>
-      <td>${post.totalStats.reads.toLocaleString()}</td>
+      <td>${safeTitle}</td>
+      <td>${views.toLocaleString()}</td>
+      <td>${reads.toLocaleString()}</td>
       <td>${readPercent}%</td>
       <td>${fans}</td>
       <td>${earnings}</td>
+      <td>${typeof post.claps === 'number' ? post.claps.toLocaleString() : '--'}</td>
+      <td>${typeof post.comments === 'number' ? post.comments.toLocaleString() : '--'}</td>
     `;
     tableBody.appendChild(row);
   });
@@ -408,8 +499,8 @@ async function renderPersonalStats(data) {
     avgReadPercent,
     articles: articles.map(a => ({
       title: a.title,
-      views: a.totalStats.views,
-      reads: a.totalStats.reads,
+      views: parseInt(a.totalStats.views) || 0,
+      reads: parseInt(a.totalStats.reads) || 0,
       fans: a.fans,
       earnings: a.earnings
     }))
@@ -684,14 +775,14 @@ async function renderPersonalStats(data) {
   let articles = data.user.postsConnection.edges.map(edge => edge.node);
   window._lastPersonalStatsArticles = articles;
   const tableBody = document.querySelector('#articles-table tbody');
-  tableBody.innerHTML = '<tr><td colspan="6">Loading fans and earnings...</td></tr>';
+  tableBody.innerHTML = '<tr><td colspan="8">Loading fans and earnings...</td></tr>';
   articles = await fetchFansForArticles(articles);
   articles = await fetchPerArticleEarnings(articles);
   window._lastPersonalStatsArticles = articles;
   const sortMetric = document.getElementById('sort-metric').value;
   articles.sort((a, b) => {
-    if (sortMetric === 'views') return b.totalStats.views - a.totalStats.views;
-    if (sortMetric === 'reads') return b.totalStats.reads - a.totalStats.reads;
+    if (sortMetric === 'views') return (parseInt(b.totalStats.views)||0) - (parseInt(a.totalStats.views)||0);
+    if (sortMetric === 'reads') return (parseInt(b.totalStats.reads)||0) - (parseInt(a.totalStats.reads)||0);
     if (sortMetric === 'readPercent') {
       const aPct = a.totalStats.views ? a.totalStats.reads / a.totalStats.views : 0;
       const bPct = b.totalStats.views ? b.totalStats.reads / b.totalStats.views : 0;
@@ -703,11 +794,16 @@ async function renderPersonalStats(data) {
   tableBody.innerHTML = '';
   let totalReads = 0, totalViews = 0;
   articles.forEach(post => {
-    totalReads += post.totalStats.reads;
-    totalViews += post.totalStats.views;
-    const readPercent = post.totalStats.views ? ((post.totalStats.reads / post.totalStats.views) * 100).toFixed(1) : '0';
+    // Parse numbers safely
+    const views = parseInt(post.totalStats.views) || 0;
+    const reads = parseInt(post.totalStats.reads) || 0;
+    totalReads += reads;
+    totalViews += views;
+    const readPercent = views ? ((reads / views) * 100).toFixed(1) : '0';
     const fans = typeof post.fans === 'number' ? post.fans : '--';
-    const earnings = post.earnings !== '--' ? post.earnings : `<span title='Per-article earnings not found. See summary above.'>--</span>`;
+    const earnings = post.earnings && post.earnings !== '--' ? post.earnings : `<span title='Per-article earnings not found. See summary above.'>--</span>`;
+    // Fix encoding issues in title
+    const safeTitle = (post.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const row = document.createElement('tr');
     row.id = `post-row-${post.id}`;
     row.className = 'clickable-row';
@@ -716,12 +812,14 @@ async function renderPersonalStats(data) {
       chrome.tabs.create({ url: `https://medium.com/p/${post.id}` });
     });
     row.innerHTML = `
-      <td>${post.title}</td>
-      <td>${post.totalStats.views.toLocaleString()}</td>
-      <td>${post.totalStats.reads.toLocaleString()}</td>
+      <td>${safeTitle}</td>
+      <td>${views.toLocaleString()}</td>
+      <td>${reads.toLocaleString()}</td>
       <td>${readPercent}%</td>
       <td>${fans}</td>
       <td>${earnings}</td>
+      <td>${typeof post.claps === 'number' ? post.claps.toLocaleString() : '--'}</td>
+      <td>${typeof post.comments === 'number' ? post.comments.toLocaleString() : '--'}</td>
     `;
     tableBody.appendChild(row);
   });
@@ -736,8 +834,8 @@ async function renderPersonalStats(data) {
     avgReadPercent,
     articles: articles.map(a => ({
       title: a.title,
-      views: a.totalStats.views,
-      reads: a.totalStats.reads,
+      views: parseInt(a.totalStats.views) || 0,
+      reads: parseInt(a.totalStats.reads) || 0,
       fans: a.fans,
       earnings: a.earnings
     }))
@@ -922,4 +1020,172 @@ function setVizTab(tab) {
   document.querySelectorAll('.viz-tab').forEach(btn => btn.classList.remove('active'));
   document.getElementById('viz-tab-' + tab).classList.add('active');
   renderStatsChart(window._lastPersonalStatsArticles || []);
+}
+
+function fetchAndDisplayTrendingArticles() {
+  const loader = document.getElementById('loader');
+  const errorEl = document.getElementById('error-message-trending');
+  const listEl = document.getElementById('trending-articles-list');
+  if (!listEl) return;
+  errorEl.textContent = '';
+  listEl.innerHTML = 'Loading...';
+  fetch('https://medium.com/')
+    .then(res => res.text())
+    .then(html => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      // Try to find trending articles (top stories)
+      const articles = [];
+      // Medium homepage uses <h2> for story titles, but structure may change
+      const storyEls = doc.querySelectorAll('h2');
+      storyEls.forEach(h2 => {
+        const title = h2.textContent.trim();
+        let link = null;
+        let author = '--';
+        // Try to find the article link (parent or ancestor <a>)
+        let el = h2;
+        while (el && el !== doc.body && !link) {
+          if (el.tagName === 'A' && el.href && el.href.includes('/p/')) link = el.href;
+          el = el.parentElement;
+        }
+        // Try to find author (look for sibling or ancestor span)
+        let authorEl = h2.parentElement && h2.parentElement.querySelector('span, a');
+        if (authorEl) author = authorEl.textContent.trim();
+        if (title && link) articles.push({ title, link, author });
+      });
+      if (articles.length === 0) {
+        listEl.innerHTML = '<p>No trending articles found. Medium homepage structure may have changed.</p>';
+      } else {
+        listEl.innerHTML = articles.slice(0, 10).map(a =>
+          `<div class="trending-article">
+            <a href="${a.link}" target="_blank"><b>${a.title}</b></a><br>
+            <span class="trending-author">${a.author}</span>
+          </div>`
+        ).join('');
+      }
+    })
+    .catch(err => {
+      errorEl.textContent = 'Error fetching trending articles: ' + err.message;
+      listEl.innerHTML = '';
+    });
+}
+
+// Add follower growth chart logic
+function renderFollowerGrowthChart() {
+  chrome.storage.local.get(['personalStatsHistory'], result => {
+    const history = result.personalStatsHistory || [];
+    const followerData = history
+      .map(entry => ({
+        date: entry.timestamp,
+        count: entry.data && typeof entry.data.followerCount === 'number' ? entry.data.followerCount : null
+      }))
+      .filter(d => d.count !== null);
+    if (followerData.length < 2) {
+      document.getElementById('follower-growth-delta').textContent = '';
+      if (window._followerGrowthChart) window._followerGrowthChart.destroy();
+      return;
+    }
+    // Chart
+    const ctx = document.getElementById('follower-growth-chart').getContext('2d');
+    if (window._followerGrowthChart) window._followerGrowthChart.destroy();
+    window._followerGrowthChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: followerData.map(d => new Date(d.date).toLocaleDateString()),
+        datasets: [{
+          label: 'Followers',
+          data: followerData.map(d => d.count),
+          borderColor: '#1a8917',
+          backgroundColor: 'rgba(26,137,23,0.08)',
+          tension: 0.2,
+          pointRadius: 2,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { display: false } },
+        elements: { line: { borderWidth: 2 } },
+        animation: { duration: 600 }
+      }
+    });
+    // Delta
+    const delta = followerData[followerData.length - 1].count - followerData[followerData.length - 2].count;
+    const deltaEl = document.getElementById('follower-growth-delta');
+    if (delta > 0) {
+      deltaEl.textContent = `+${delta.toLocaleString()} since last update`;
+      deltaEl.style.color = '#1a8917';
+    } else if (delta < 0) {
+      deltaEl.textContent = `${delta.toLocaleString()} since last update`;
+      deltaEl.style.color = '#d7263d';
+    } else {
+      deltaEl.textContent = 'No change since last update';
+      deltaEl.style.color = '#757575';
+    }
+  });
+}
+
+// --- NOTIFICATIONS LOGIC ---
+const NOTIFICATION_MILESTONES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
+function checkAndNotifyMilestone(totalViews) {
+  chrome.storage.local.get(['lastMilestoneNotified'], result => {
+    let last = result.lastMilestoneNotified || 0;
+    let newMilestone = null;
+    for (let i = 0; i < NOTIFICATION_MILESTONES.length; i++) {
+      if (totalViews >= NOTIFICATION_MILESTONES[i] && last < NOTIFICATION_MILESTONES[i]) {
+        newMilestone = NOTIFICATION_MILESTONES[i];
+      }
+    }
+    if (newMilestone) {
+      chrome.notifications && chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'Super Stats Milestone!',
+        message: `Congrats! You've reached ${newMilestone.toLocaleString()} views on Medium!`
+      });
+      chrome.storage.local.set({ lastMilestoneNotified: newMilestone });
+    }
+  });
+}
+
+// --- SETTINGS LOGIC ---
+function isNotificationsEnabled(cb) {
+  chrome.storage.local.get(['superstatsSettings'], result => {
+    const settings = result.superstatsSettings || {};
+    cb(settings.notifications !== false);
+  });
+}
+function setNotificationsEnabled(enabled) {
+  chrome.storage.local.get(['superstatsSettings'], result => {
+    const settings = result.superstatsSettings || {};
+    settings.notifications = !!enabled;
+    chrome.storage.local.set({ superstatsSettings: settings });
+  });
+}
+
+// Add settings UI
+function renderSettings() {
+  const container = document.getElementById('settings-section');
+  if (!container) return;
+  container.innerHTML = `<label><input type="checkbox" id="notif-toggle"> Enable milestone notifications</label>`;
+  isNotificationsEnabled(enabled => {
+    document.getElementById('notif-toggle').checked = enabled;
+  });
+  document.getElementById('notif-toggle').addEventListener('change', e => {
+    setNotificationsEnabled(e.target.checked);
+  });
+}
+
+// After stats update, check for milestone notification
+function handleStatsWithNotifications(articles, error, followerCount) {
+  // ... existing handleStats logic ...
+  // At the end, after updating UI:
+  let totalViews = 0;
+  if (articles && articles.length) {
+    totalViews = articles.reduce((sum, a) => sum + (a.views || 0), 0);
+  }
+  isNotificationsEnabled(enabled => {
+    if (enabled) checkAndNotifyMilestone(totalViews);
+  });
 }
