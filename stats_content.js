@@ -147,33 +147,56 @@ logStatsTextNodes();
 
 // --- Robust Medium Stats Extraction ---
 
-function getArticleRows() {
-  // Try table with known class
-  let rows = document.querySelectorAll('table.ji tbody tr');
-  if (rows.length) return rows;
+function detectColumns(table) {
+  const headers = Array.from(table.querySelectorAll('thead th,[role="columnheader"]'));
+  const map = {};
+  headers.forEach((th, i) => {
+    const txt = th.textContent.trim().toLowerCase();
+    if (txt.includes('date') || txt.includes('published')) map.date = i;
+    if (txt.includes('title')) map.title = i;
+    if (txt.includes('view')) map.views = i;
+    if (txt.includes('read') && !map.reads) map.reads = i;
+    if (txt.includes('earning')) map.earnings = i;
+  });
+  return map;
+}
 
-  // Fallback: any table with at least 2 columns and a heading
-  let tables = Array.from(document.querySelectorAll('table'));
-  for (let table of tables) {
-    let ths = table.querySelectorAll('th');
-    if (ths.length >= 2 && /title|story|article/i.test(table.textContent)) {
-      return table.querySelectorAll('tbody tr');
-    }
+function getArticleRows() {
+  // Try known class first
+  let table = document.querySelector('table.ji');
+  if (table) {
+    const rows = table.querySelectorAll('tbody tr');
+    if (rows.length) return { rows, map: detectColumns(table) };
   }
 
-  // Fallback: look for divs with lots of children and text
-  let divs = Array.from(document.querySelectorAll('div')).filter(d => d.children.length > 5 && d.textContent.length > 100);
-  // Could add more heuristics here if needed
-  return [];
+  // Any visible table containing stats keywords
+  const tables = Array.from(document.querySelectorAll('table')).filter(t =>
+    /views?/i.test(t.textContent) && /reads?/i.test(t.textContent)
+  );
+  for (const tbl of tables) {
+    const rows = tbl.querySelectorAll('tbody tr');
+    if (rows.length) return { rows, map: detectColumns(tbl) };
+  }
+
+  // ARIA tables
+  const roleTables = Array.from(document.querySelectorAll('[role="table"]')).filter(t =>
+    /views?/i.test(t.textContent) && /reads?/i.test(t.textContent)
+  );
+  for (const tbl of roleTables) {
+    const rows = tbl.querySelectorAll('[role="row"]');
+    if (rows.length) return { rows, map: detectColumns(tbl) };
+  }
+
+  return { rows: [], map: {} };
 }
 
 function waitForStatsTable(callback, timeout = 10000) {
   let found = false;
   const check = () => {
-    const rows = getArticleRows();
-    if (rows.length) {
+    const result = getArticleRows();
+    if (result.rows.length) {
       found = true;
-      callback(rows);
+      callback(result.rows, result.map);
     }
   };
   check();
@@ -190,31 +213,29 @@ function waitForStatsTable(callback, timeout = 10000) {
   }, timeout);
 }
 
-function extractStatsFromRow(row) {
-  const tds = row.querySelectorAll('td');
-  let date = '', title = '', views = '', reads = '', earnings = '';
-  if (tds.length >= 5) {
-    date = tds[0].textContent.trim();
-    const h2 = tds[1].querySelector('h2');
-    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
-    views = tds[2].textContent.trim();
-    reads = tds[3].textContent.trim();
-    earnings = tds[4].textContent.trim();
-  } else if (tds.length >= 2) {
-    // Fallback: just date and title
-    date = tds[0].textContent.trim();
-    const h2 = tds[1].querySelector('h2');
-    title = h2 ? h2.textContent.trim() : tds[1].textContent.trim();
-  }
-  return { date, title, views, reads, earnings };
+function extractStatsFromRow(row, map) {
+  const cells = row.querySelectorAll('td,[role="cell"]');
+  const getText = idx => (typeof idx === 'number' && cells[idx]) ? cells[idx].textContent.trim() : '';
+  const date = getText(map.date);
+  const titleCell = cells[map.title];
+  let title = getText(map.title);
+  const h2 = titleCell ? titleCell.querySelector('h2') : null;
+  if (h2) title = h2.textContent.trim();
+  return {
+    date,
+    title,
+    views: getText(map.views),
+    reads: getText(map.reads),
+    earnings: getText(map.earnings)
+  };
 }
 
 function robustExtractArticles(callback) {
-  waitForStatsTable((rows) => {
+  waitForStatsTable((rows, map) => {
     const articles = [];
     rows.forEach(row => {
       try {
-        articles.push(extractStatsFromRow(row));
+        articles.push(extractStatsFromRow(row, map));
       } catch (e) {
         console.error('[SuperStats] Error extracting row:', e, row);
       }
