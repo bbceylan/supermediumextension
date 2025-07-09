@@ -175,51 +175,77 @@ async function fetchClapsAndFansForArticles(articles) {
   return results;
 }
 
-// Chart.js CDN loader
-function loadChartJs(callback) {
-  if (window.Chart) return callback();
-  const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
-  script.onload = callback;
-  document.head.appendChild(script);
-}
+// Remove Chart.js CDN loader
+// function loadChartJs(callback) { ... }
+// All code can now use Chart directly.
 
-function getMilestone(totalViews) {
-  // Next milestone is next power of 10 (1K, 10K, 100K, etc.)
-  if (totalViews < 1000) return 1000;
-  const exp = Math.floor(Math.log10(totalViews));
-  return Math.pow(10, exp + 1);
+// --- MILESTONE LOGIC ---
+const MILESTONES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
+function getNextMilestone(totalViews) {
+  for (let i = 0; i < MILESTONES.length; i++) {
+    if (totalViews < MILESTONES[i]) return MILESTONES[i];
+  }
+  return MILESTONES[MILESTONES.length - 1];
 }
-
+function getPrevMilestone(totalViews) {
+  let prev = 0;
+  for (let i = 0; i < MILESTONES.length; i++) {
+    if (totalViews < MILESTONES[i]) return prev;
+    prev = MILESTONES[i];
+  }
+  return prev;
+}
 function updateMilestoneProgress(totalViews) {
-  const milestone = getMilestone(totalViews);
-  const percent = Math.min(100, (totalViews / milestone) * 100);
+  const next = getNextMilestone(totalViews);
+  const prev = getPrevMilestone(totalViews);
+  const percent = Math.min(100, ((totalViews - prev) / (next - prev)) * 100);
   document.getElementById('milestone-progress').style.width = percent + '%';
-  document.getElementById('milestone-label').textContent = `${totalViews.toLocaleString()} / ${milestone.toLocaleString()} views`;
+  document.getElementById('milestone-label').textContent = `${totalViews.toLocaleString()} / ${next.toLocaleString()} views (Next milestone)`;
 }
-
-function renderStatsChart(articles) {
-  loadChartJs(() => {
-    const ctx = document.getElementById('stats-chart').getContext('2d');
-    if (window._statsChart) window._statsChart.destroy();
-    window._statsChart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: articles.map(a => a.title.slice(0, 20) + (a.title.length > 20 ? '…' : '')),
-        datasets: [
-          { label: 'Views', data: articles.map(a => a.totalStats.views), backgroundColor: '#3498db' },
-          { label: 'Reads', data: articles.map(a => a.totalStats.reads), backgroundColor: '#2ecc71' },
-          { label: 'Claps', data: articles.map(a => a.claps), backgroundColor: '#f1c40f' }
-        ]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: true } },
-        scales: { x: { stacked: true }, y: { beginAtZero: true } }
-      }
-    });
+function renderMilestoneBadges(totalViews) {
+  const container = document.getElementById('milestone-badges');
+  if (!container) return;
+  container.innerHTML = '';
+  MILESTONES.forEach(milestone => {
+    const badge = document.createElement('span');
+    badge.className = 'milestone-badge' + (totalViews >= milestone ? ' achieved' : '');
+    badge.textContent = milestone >= 1000 ? (milestone/1000)+'K' : milestone;
+    container.appendChild(badge);
   });
 }
+// --- END MILESTONE LOGIC ---
+
+// --- CHART LOGIC ---
+function renderStatsChart(articles) {
+  const ctx = document.getElementById('stats-chart').getContext('2d');
+  if (window._statsChart) window._statsChart.destroy();
+  let chartData = articles && articles.length > 0 ? {
+    labels: articles.map(a => a.title.slice(0, 20) + (a.title.length > 20 ? '…' : '')),
+    datasets: [
+      { label: 'Views', data: articles.map(a => a.totalStats.views), backgroundColor: '#e9b97a' },
+      { label: 'Reads', data: articles.map(a => a.totalStats.reads), backgroundColor: '#b86b1b' },
+      { label: 'Claps', data: articles.map(a => a.claps), backgroundColor: '#f7e7ce' }
+    ]
+  } : {
+    labels: ['No Data'],
+    datasets: [
+      { label: 'Views', data: [0], backgroundColor: '#e9b97a' },
+      { label: 'Reads', data: [0], backgroundColor: '#b86b1b' },
+      { label: 'Claps', data: [0], backgroundColor: '#f7e7ce' }
+    ]
+  };
+  window._statsChart = new Chart(ctx, {
+    type: 'bar',
+    data: chartData,
+    options: {
+      responsive: true,
+      plugins: { legend: { display: true } },
+      scales: { x: { stacked: true }, y: { beginAtZero: true } },
+      animation: { duration: 900, easing: 'easeOutBounce' }
+    }
+  });
+}
+// --- END CHART LOGIC ---
 
 function saveStatsHistory(data) {
   chrome.storage.local.get(['statsHistory'], result => {
@@ -308,8 +334,8 @@ async function renderPersonalStats(data) {
   });
   const avgReadPercent = totalViews > 0 ? ((totalReads / totalViews) * 100).toFixed(1) : '0';
   document.getElementById('avg-read-percent').textContent = avgReadPercent + '%';
-  document.getElementById('earnings').textContent = '--';
   updateMilestoneProgress(totalViews);
+  renderMilestoneBadges(totalViews);
   renderStatsChart(articles);
   saveStatsHistory({
     totalViews,
@@ -325,6 +351,7 @@ async function renderPersonalStats(data) {
   });
 }
 
+// --- EARNINGS SCRAPING LOGIC ---
 async function fetchAndDisplayEarnings() {
   try {
     const response = await fetch('https://medium.com/me/partner-program/earnings', { credentials: 'include' });
@@ -332,20 +359,34 @@ async function fetchAndDisplayEarnings() {
     const htmlString = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlString, 'text/html');
-    // Try to find the element that contains the total earnings. This selector may need to be updated if Medium changes their UI.
     let earnings = '--';
-    // Try common selectors for earnings
-    const earningsEl = doc.querySelector('[data-testid="earnings-summary"]') || doc.querySelector('h2, .earnings, .summary');
-    if (earningsEl) {
-      const text = earningsEl.textContent;
-      const match = text.match(/\$[\d,.]+/);
-      if (match) earnings = match[0];
+    // Try multiple selectors for robustness
+    const selectors = [
+      '[data-testid="earnings-summary"]',
+      '[data-testid*="earnings"]',
+      'h2',
+      '.earnings',
+      '.summary',
+      'span',
+      'div'
+    ];
+    for (const sel of selectors) {
+      const el = doc.querySelector(sel);
+      if (el && /\$[\d,.]+/.test(el.textContent)) {
+        const match = el.textContent.match(/\$[\d,.]+/);
+        if (match) { earnings = match[0]; break; }
+      }
     }
-    document.getElementById('earnings').textContent = earnings;
+    if (earnings === '--') {
+      document.getElementById('earnings').textContent = 'No earnings data (not eligible or not available)';
+    } else {
+      document.getElementById('earnings').textContent = earnings;
+    }
   } catch (e) {
-    document.getElementById('earnings').textContent = '--';
+    document.getElementById('earnings').textContent = 'No earnings data (not eligible or not available)';
   }
 }
+// --- END EARNINGS LOGIC ---
 
 // --- TAG SEARCH LOGIC ---
 async function fetchAndDisplayTagTrends() {

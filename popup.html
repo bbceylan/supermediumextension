@@ -67,14 +67,16 @@
         </div>
         <div class="summary-card">
           <h3>Milestone Progress</h3>
-          <div id="milestone-progress-bar" style="height: 18px; background: #333; border-radius: 8px; overflow: hidden; margin: 10px 0;">
-            <div id="milestone-progress" style="height: 100%; background: #3498db; width: 0%; transition: width 0.5s;"></div>
+          <div id="milestone-progress-bar" style="height: 18px; background: #ffe3b3; border-radius: 12px; overflow: hidden; margin: 10px 0;">
+            <div id="milestone-progress" style="height: 100%; background: linear-gradient(90deg, #e9b97a 60%, #b86b1b 100%); width: 0%; transition: width 0.5s;"></div>
           </div>
           <p id="milestone-label">--</p>
+          <div id="milestone-badges" style="display: flex; justify-content: center; gap: 8px; margin-top: 8px;"></div>
         </div>
         <div class="visualization-section">
           <h3>Visualizations</h3>
           <canvas id="stats-chart" height="180"></canvas>
+          <div id="chart-placeholder" style="display:none; text-align:center; color:#b86b1b; font-size:1.1em; margin-top:10px;">No data to display yet!</div>
         </div>
         <div class="history-section">
           <button id="view-history-btn">View Stats History</button>
@@ -123,5 +125,6 @@
     </div>
 
   </div>
+  <script src="chart.min.js"></script>
   <script src="popup.js"></script>
 </body></html>
